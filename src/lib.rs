@@ -2,6 +2,9 @@
 
 use core::fmt;
 
+const BOARD_WIDTH: usize = 10;
+const BOARD_HEIGHT: usize = 20;
+
 // Define colors
 #[derive(Clone, Copy)]
 pub enum Color {
@@ -14,23 +17,50 @@ pub enum Color {
     White,
 }
 
+// Tetromino struct
+#[derive(Clone, Copy)]
+pub struct Tetromino {
+    shape: [(u8, u8); 4],
+    color: Color,
+}
+
 // Tetromino shapes with their rotations
-const TETROMINOS: &[([(u8, u8); 4], Color); 7] = &[
-    ([(0, 1), (1, 1), (2, 1), (3, 1)], Color::Cyan), // I
-    ([(0, 0), (0, 1), (1, 0), (1, 1)], Color::Yellow), // O
-    ([(0, 1), (1, 1), (2, 1), (1, 0)], Color::Magenta), // T
-    ([(0, 0), (1, 0), (2, 0), (2, 1)], Color::Green), // L
-    ([(0, 1), (1, 1), (2, 1), (2, 0)], Color::Red),  // J
-    ([(0, 0), (1, 0), (1, 1), (2, 1)], Color::Blue), // S
-    ([(0, 1), (1, 1), (1, 0), (2, 0)], Color::White), // Z
+const TETROMINOS: &[Tetromino; 7] = &[
+    Tetromino {
+        shape: [(0, 1), (1, 1), (2, 1), (3, 1)],
+        color: Color::Cyan,
+    }, // I
+    Tetromino {
+        shape: [(0, 0), (0, 1), (1, 0), (1, 1)],
+        color: Color::Yellow,
+    }, // O
+    Tetromino {
+        shape: [(0, 1), (1, 1), (2, 1), (1, 0)],
+        color: Color::Magenta,
+    }, // T
+    Tetromino {
+        shape: [(0, 0), (1, 0), (2, 0), (2, 1)],
+        color: Color::Green,
+    }, // L
+    Tetromino {
+        shape: [(0, 1), (1, 1), (2, 1), (2, 0)],
+        color: Color::Red,
+    }, // J
+    Tetromino {
+        shape: [(0, 0), (1, 0), (1, 1), (2, 1)],
+        color: Color::Blue,
+    }, // S
+    Tetromino {
+        shape: [(0, 1), (1, 1), (1, 0), (2, 0)],
+        color: Color::White,
+    }, // Z
 ];
 
 // Game state
 pub struct Tetris {
-    board: [[Option<Color>; 10]; 20],
-    current_piece: [(u8, u8); 4],
+    board: [[Option<Color>; BOARD_WIDTH]; BOARD_HEIGHT],
+    current_piece: Tetromino,
     piece_pos: (i8, i8),
-    piece_color: Color,
     pub score: u32,
     game_over: bool,
 }
@@ -38,15 +68,14 @@ pub struct Tetris {
 impl Tetris {
     pub fn new() -> Self {
         let mut game = Tetris {
-            board: [[None; 10]; 20],
-            current_piece: TETROMINOS[0].0,
+            board: [[None; BOARD_WIDTH]; BOARD_HEIGHT],
+            current_piece: TETROMINOS[0].clone(),
             piece_pos: (3, 0),
-            piece_color: TETROMINOS[0].1,
             score: 0,
             game_over: false,
         };
         // Check initial spawn
-        if !game.can_place(&game.current_piece, game.piece_pos) {
+        if !game.can_place(&game.current_piece.shape, game.piece_pos) {
             game.game_over = true;
         }
         game
@@ -84,11 +113,14 @@ impl Tetris {
         }
         let mut rotated = [(0, 0); 4];
         for i in 0..4 {
-            rotated[i] = (self.current_piece[i].1, 3 - self.current_piece[i].0);
+            rotated[i] = (
+                self.current_piece.shape[i].1,
+                3 - self.current_piece.shape[i].0,
+            );
         }
 
         if self.can_place(&rotated, self.piece_pos) {
-            self.current_piece = rotated;
+            self.current_piece.shape = rotated;
             true
         } else {
             false
@@ -100,7 +132,7 @@ impl Tetris {
             return false;
         }
         let new_pos = (self.piece_pos.0 + delta.0, self.piece_pos.1 + delta.1);
-        if self.can_place(&self.current_piece, new_pos) {
+        if self.can_place(&self.current_piece.shape, new_pos) {
             self.piece_pos = new_pos;
             true
         } else {
@@ -113,8 +145,8 @@ impl Tetris {
             let x = pos.0 + dx as i8;
             let y = pos.1 + dy as i8;
             if x < 0
-                || x >= 10
-                || y >= 20
+                || x >= BOARD_WIDTH as i8
+                || y >= BOARD_HEIGHT as i8
                 || (y >= 0 && self.board[y as usize][x as usize].is_some())
             {
                 return false;
@@ -127,13 +159,15 @@ impl Tetris {
         if self.game_over {
             return;
         }
-        for &(dx, dy) in &self.current_piece {
+        for &(dx, dy) in &self.current_piece.shape {
             let x = (self.piece_pos.0 + dx as i8) as usize;
             let y = (self.piece_pos.1 + dy as i8) as usize;
-            self.board[y][x] = Some(self.piece_color);
+            self.board[y][x] = Some(self.current_piece.color);
         }
         self.check_lines();
     }
+
+    // fn select_new_piece(tetrominos) {
 
     fn spawn_new_piece(&mut self) {
         if self.game_over {
@@ -141,12 +175,11 @@ impl Tetris {
         }
         // Simple random selection (in real impl would need RNG)
         let idx = (self.score % 7) as usize;
-        self.current_piece = TETROMINOS[idx].0;
-        self.piece_color = TETROMINOS[idx].1;
+        self.current_piece = TETROMINOS[idx].clone();
         self.piece_pos = (3, 0);
 
         // Check if new piece can be placed, if not, game over
-        if !self.can_place(&self.current_piece, self.piece_pos) {
+        if !self.can_place(&self.current_piece.shape, self.piece_pos) {
             self.game_over = true;
         }
     }
@@ -155,13 +188,13 @@ impl Tetris {
         if self.game_over {
             return;
         }
-        for y in 0..20 {
+        for y in 0..BOARD_HEIGHT {
             if self.board[y].iter().all(|&cell| cell.is_some()) {
                 // Clear line
                 for yy in (1..=y).rev() {
                     self.board[yy] = self.board[yy - 1];
                 }
-                self.board[0] = [None; 10];
+                self.board[0] = [None; BOARD_WIDTH];
                 self.score += 100;
             }
         }
@@ -170,12 +203,12 @@ impl Tetris {
 
 // Separate drawing function
 pub fn draw_on_screen(tetris: &Tetris, f: &mut impl fmt::Write) -> fmt::Result {
-    for y in 0..20 {
+    for y in 0..BOARD_HEIGHT {
         write!(f, "|")?;
-        for x in 0..10 {
+        for x in 0..BOARD_WIDTH {
             let mut occupied = tetris.board[y][x].is_some();
             if !tetris.game_over {
-                for &(dx, dy) in &tetris.current_piece {
+                for &(dx, dy) in &tetris.current_piece.shape {
                     if (tetris.piece_pos.0 + dx as i8) as usize == x
                         && (tetris.piece_pos.1 + dy as i8) as usize == y
                     {
