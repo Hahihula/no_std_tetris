@@ -1,0 +1,26 @@
+[package]
+name = "no_std_tetris"
+version = "0.1.0"
+authors = [ "Petr Gadorek <hahihula@gmail.com>"]
+edition = "2024"
+description = "A flexible Tetris implementation for no_std and standard environments"
+license = "MIT"
+repository = "https://github.com/Hahihula/no_std_tetris"
+documentation = "https://docs.rs/no_std_tetris"
+readme = "README.md"
+keywords = ["tetris", "game", "no_std", "embedded"]
+categories = ["games", "no-std", "embedded"]
+
+[lib]
+name = "tetris_game"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tetris"
+path = "src/main.rs"
+
+
+[dependencies]
+crossterm = "0.27"
+ctrlc = "3.4"
+rand = "0.9.1"

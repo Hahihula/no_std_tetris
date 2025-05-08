@@ -1,8 +1,9 @@
+use rand::Rng as RandRng; // Using the rand crate for simplicity
 use std::io::{self, Stdout, Write};
 use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 use std::time::{Duration, Instant};
-use tetris_game::{Tetris, draw_on_screen};
+use tetris_game::{RandomGenerator, Tetris, draw_on_screen};
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -10,6 +11,25 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 use ctrlc;
+
+// Implement a simple Random Generator using rand crate
+struct SimpleRng {
+    rng: rand::rngs::ThreadRng,
+}
+
+impl SimpleRng {
+    fn new() -> Self {
+        SimpleRng {
+            rng: rand::thread_rng(),
+        }
+    }
+}
+
+impl RandomGenerator for SimpleRng {
+    fn next_random(&mut self) -> usize {
+        self.rng.gen_range(0..usize::MAX)
+    }
+}
 
 struct TerminalWriter {
     stdout: Stdout,
@@ -44,7 +64,8 @@ fn main() -> io::Result<()> {
     })
     .expect("Error setting Ctrl+C handler");
 
-    let mut game = Tetris::new();
+    let rng = SimpleRng::new();
+    let mut game = Tetris::new(rng);
     let mut writer = TerminalWriter::new();
     let mut last_update = Instant::now();
     let fall_interval = Duration::from_millis(500);

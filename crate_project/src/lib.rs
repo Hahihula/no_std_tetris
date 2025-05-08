@@ -57,22 +57,28 @@ const TETROMINOS: &[Tetromino; 7] = &[
 ];
 
 // Game state
-pub struct Tetris {
+pub struct Tetris<R: RandomGenerator> {
     board: [[Option<Color>; BOARD_WIDTH]; BOARD_HEIGHT],
     current_piece: Tetromino,
     piece_pos: (i8, i8),
     pub score: u32,
     game_over: bool,
+    rng: R,
 }
 
-impl Tetris {
-    pub fn new() -> Self {
+pub trait RandomGenerator {
+    fn next_random(&mut self) -> usize;
+}
+
+impl<R: RandomGenerator> Tetris<R> {
+    pub fn new(rng: R) -> Self {
         let mut game = Tetris {
             board: [[None; BOARD_WIDTH]; BOARD_HEIGHT],
             current_piece: TETROMINOS[0].clone(),
             piece_pos: (3, 0),
             score: 0,
             game_over: false,
+            rng,
         };
         // Check initial spawn
         if !game.can_place(&game.current_piece.shape, game.piece_pos) {
@@ -174,7 +180,7 @@ impl Tetris {
             return;
         }
         // Simple random selection (in real impl would need RNG)
-        let idx = (self.score % 7) as usize;
+        let idx = self.rng.next_random() % 7;
         self.current_piece = TETROMINOS[idx].clone();
         self.piece_pos = (3, 0);
 
@@ -201,8 +207,11 @@ impl Tetris {
     }
 }
 
-// Separate drawing function
-pub fn draw_on_screen(tetris: &Tetris, f: &mut impl fmt::Write) -> fmt::Result {
+// Example drawing function
+pub fn draw_on_screen<R: RandomGenerator>(
+    tetris: &Tetris<R>,
+    f: &mut impl fmt::Write,
+) -> fmt::Result {
     for y in 0..BOARD_HEIGHT {
         write!(f, "|")?;
         for x in 0..BOARD_WIDTH {
