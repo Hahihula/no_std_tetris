@@ -120,7 +120,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nostd_tetris"
+name = "no_std_tetris"
 version = "0.1.0"
 dependencies = [
  "crossterm",
