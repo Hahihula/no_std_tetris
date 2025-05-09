@@ -9,7 +9,8 @@ A minimalist, flexible Tetris implementation in Rust that works in both `no_std`
 ## Project structure
 ```
 no_std_tetris/
-├── crate_project           # the crate and terminal example
+├── no_std_tetris           # the crate
+├── terminal_example        # terminal example
 ├── esp32_c3_example        # example implementation on esp32-c3
 ├── LICENSE
 └── README.md

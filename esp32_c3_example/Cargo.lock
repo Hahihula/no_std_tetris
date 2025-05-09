@@ -605,6 +605,7 @@ dependencies = [
  "esp-println",
  "esp-wifi",
  "heapless",
+ "no_std_tetris",
  "sh1106",
  "smoltcp",
 ]
@@ -814,6 +815,10 @@ name = "nb"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
+
+[[package]]
+name = "no_std_tetris"
+version = "0.1.1"
 
 [[package]]
 name = "num-derive"

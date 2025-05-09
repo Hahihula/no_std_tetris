@@ -1,0 +1,10 @@
+[package]
+name = "example_terminal_tetris"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crossterm = "0.27"
+ctrlc = "3.4"
+rand = "0.9.1"
+no_std_tetris = { path = "../no_std_tetris", package="no_std_tetris" }

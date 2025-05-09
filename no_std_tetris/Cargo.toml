@@ -15,14 +15,4 @@ categories = ["games", "no-std", "embedded"]
 name = "tetris_game"
 path = "src/lib.rs"
 
-[[bin]]
-name = "tetris"
-path = "src/main.rs"
-
 [dependencies]
-# No dependencies for the library
-
-[dev-dependencies]
-crossterm = "0.27"
-ctrlc = "3.4"
-rand = "0.9.1"

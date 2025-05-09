@@ -20,8 +20,8 @@ pub enum Color {
 // Tetromino struct
 #[derive(Clone, Copy)]
 pub struct Tetromino {
-    shape: [(u8, u8); 4],
-    color: Color,
+    pub shape: [(u8, u8); 4],
+    pub color: Color,
 }
 
 // Tetromino shapes with their rotations
@@ -58,11 +58,11 @@ const TETROMINOS: &[Tetromino; 7] = &[
 
 // Game state
 pub struct Tetris<R: RandomGenerator> {
-    board: [[Option<Color>; BOARD_WIDTH]; BOARD_HEIGHT],
-    current_piece: Tetromino,
-    piece_pos: (i8, i8),
+    pub board: [[Option<Color>; BOARD_WIDTH]; BOARD_HEIGHT],
+    pub current_piece: Tetromino,
+    pub piece_pos: (i8, i8),
     pub score: u32,
-    game_over: bool,
+    pub game_over: bool,
     rng: R,
 }
 

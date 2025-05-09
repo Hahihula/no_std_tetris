@@ -7,40 +7,53 @@
 //! - LEFT_BUTTON => GPIO2 -> GND
 //! - LED_STRIP_DATA => GPIO4
 //!
-//! Use Monitor to see on the output why is button debouncing important.
 
 #![no_std]
 #![no_main]
 
+use core::cell::RefCell;
+use core::fmt;
+use critical_section::Mutex;
 use embassy_executor::Spawner;
+use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{
+    delay::Delay,
     gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
+    handler, main,
     rmt::{PulseCode, Rmt, TxChannelAsync, TxChannelConfig, TxChannelCreatorAsync},
     rng::Rng,
     time::{self, Rate},
 };
 use esp_println::println;
-
-impl RandomGenerator for Rng {
-    fn next_random(&mut self) -> usize {
-        self.random() as usize
-    }
-}
+use no_std_tetris::{RandomGenerator, Tetris, Color};
 
 // global config
 const BOARD_WIDTH: usize = 10;
 const BOARD_HEIGHT: usize = 20;
 const FALL_INTERVAL: u64 = 500; // TODO: should be function of score -> higher score faster speed
-const BRIGHTNESS: u8 = 6;
-const T0H: u16 = 40;
-const T0L: u16 = 85;
-const T1H: u16 = 80;
-const T1L: u16 = 45;
+const BRIGHTNESS: u8 = 12;
+// // neopixel
+const T0H: u16 = 35; // 437.5 ns
+const T0L: u16 = 90; // 1125 ns
+const T1H: u16 = 70; // 875 ns
+const T1L: u16 = 55; // 687.5 ns
 
-fn create_led_bits(r: u8, g: u8, b: u8, w: u8) -> [u32; 33] {
-    let mut data = [PulseCode::empty(); 33];
-    let bytes = [g, r, b, w];
+struct TetrisRng(Rng);
+
+impl RandomGenerator for TetrisRng {
+    fn next_random(&mut self) -> usize {
+        self.next_random() as usize
+    }
+}
+
+
+// neopixel LED strip config
+fn create_led_bits(r: u8, g: u8, b: u8) -> [u32; 25] {
+    let mut data = [PulseCode::empty(); 25];
+
+    // WS2812B expects GRB order
+    let bytes = [g, r, b];
 
     let mut idx = 0;
     for byte in bytes {
@@ -53,7 +66,7 @@ fn create_led_bits(r: u8, g: u8, b: u8, w: u8) -> [u32; 33] {
             idx += 1;
         }
     }
-    data[32] = PulseCode::new(Level::Low, 800, Level::Low, 0);
+    data[24] = PulseCode::new(Level::Low, 800, Level::Low, 0); // Reset code
     data
 }
 
@@ -70,224 +83,18 @@ fn color_to_rgb(color: Color) -> (u8, u8, u8) {
     }
 }
 
-// Tetris Library ( from https://github.com/Hahihula/no_std_tetris )
-
-// Define colors
-#[derive(Clone, Copy)]
-pub enum Color {
-    Red,
-    Green,
-    Blue,
-    Yellow,
-    Cyan,
-    Magenta,
-    White,
-}
-
-// Tetromino struct
-#[derive(Clone, Copy)]
-pub struct Tetromino {
-    shape: [(u8, u8); 4],
-    color: Color,
-}
-
-// Tetromino shapes with their rotations
-const TETROMINOS: &[Tetromino; 7] = &[
-    Tetromino {
-        shape: [(0, 1), (1, 1), (2, 1), (3, 1)],
-        color: Color::Cyan,
-    }, // I
-    Tetromino {
-        shape: [(0, 0), (0, 1), (1, 0), (1, 1)],
-        color: Color::Yellow,
-    }, // O
-    Tetromino {
-        shape: [(0, 1), (1, 1), (2, 1), (1, 0)],
-        color: Color::Magenta,
-    }, // T
-    Tetromino {
-        shape: [(0, 0), (1, 0), (2, 0), (2, 1)],
-        color: Color::Green,
-    }, // L
-    Tetromino {
-        shape: [(0, 1), (1, 1), (2, 1), (2, 0)],
-        color: Color::Red,
-    }, // J
-    Tetromino {
-        shape: [(0, 0), (1, 0), (1, 1), (2, 1)],
-        color: Color::Blue,
-    }, // S
-    Tetromino {
-        shape: [(0, 1), (1, 1), (1, 0), (2, 0)],
-        color: Color::White,
-    }, // Z
-];
-
-// Game state
-pub struct Tetris {
-    board: [[Option<Color>; BOARD_WIDTH]; BOARD_HEIGHT],
-    current_piece: Tetromino,
-    piece_pos: (i8, i8),
-    pub score: u32,
-    game_over: bool,
-    ran: Rng,
-}
-
-impl Tetris {
-    pub fn new(rng: Rng) -> Self {
-        let mut game = Tetris {
-            board: [[None; BOARD_WIDTH]; BOARD_HEIGHT],
-            current_piece: TETROMINOS[0].clone(),
-            piece_pos: (3, 0),
-            score: 0,
-            game_over: false,
-            ran: rng,
-        };
-        // Check initial spawn
-        if !game.can_place(&game.current_piece.shape, game.piece_pos) {
-            game.game_over = true;
-        }
-        game
-    }
-
-    pub fn is_game_over(&self) -> bool {
-        self.game_over
-    }
-
-    // Control functions
-    pub fn move_left(&mut self) -> bool {
-        self.try_move((-1, 0))
-    }
-
-    pub fn move_right(&mut self) -> bool {
-        self.try_move((1, 0))
-    }
-
-    pub fn move_down(&mut self) -> bool {
-        if self.game_over {
-            return false;
-        }
-        if !self.try_move((0, 1)) {
-            self.lock_piece();
-            self.spawn_new_piece();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn rotate(&mut self) -> bool {
-        if self.game_over {
-            return false;
-        }
-        let mut rotated = [(0, 0); 4];
-        for i in 0..4 {
-            rotated[i] = (
-                self.current_piece.shape[i].1,
-                3 - self.current_piece.shape[i].0,
-            );
-        }
-
-        if self.can_place(&rotated, self.piece_pos) {
-            self.current_piece.shape = rotated;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn try_move(&mut self, delta: (i8, i8)) -> bool {
-        if self.game_over {
-            return false;
-        }
-        let new_pos = (self.piece_pos.0 + delta.0, self.piece_pos.1 + delta.1);
-        if self.can_place(&self.current_piece.shape, new_pos) {
-            self.piece_pos = new_pos;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn can_place(&self, piece: &[(u8, u8); 4], pos: (i8, i8)) -> bool {
-        for &(dx, dy) in piece {
-            let x = pos.0 + dx as i8;
-            let y = pos.1 + dy as i8;
-            if x < 0
-                || x >= BOARD_WIDTH as i8
-                || y >= BOARD_HEIGHT as i8
-                || (y >= 0 && self.board[y as usize][x as usize].is_some())
-            {
-                return false;
-            }
-        }
-        true
-    }
-
-    fn lock_piece(&mut self) {
-        if self.game_over {
-            return;
-        }
-        for &(dx, dy) in &self.current_piece.shape {
-            let x = (self.piece_pos.0 + dx as i8) as usize;
-            let y = (self.piece_pos.1 + dy as i8) as usize;
-            self.board[y][x] = Some(self.current_piece.color);
-        }
-        self.check_lines();
-    }
-
-    // fn select_new_piece(tetrominos) {
-
-    fn spawn_new_piece(&mut self) {
-        if self.game_over {
-            return;
-        }
-        // Simple random selection (in real impl would need RNG)
-        let idx = (self.ran.random() % 7) as usize;
-        self.current_piece = TETROMINOS[idx].clone();
-        self.piece_pos = (3, 0);
-
-        // Check if new piece can be placed, if not, game over
-        if !self.can_place(&self.current_piece.shape, self.piece_pos) {
-            self.game_over = true;
-        }
-    }
-
-    fn check_lines(&mut self) {
-        if self.game_over {
-            return;
-        }
-        for y in 0..BOARD_HEIGHT {
-            if self.board[y].iter().all(|&cell| cell.is_some()) {
-                // Clear line
-                for yy in (1..=y).rev() {
-                    self.board[yy] = self.board[yy - 1];
-                }
-                self.board[0] = [None; BOARD_WIDTH];
-                self.score += 100;
-                println!("Score: {}", self.score); // TODO: replace with better scoring logic
-            }
-        }
-    }
-}
-
-fn create_range(a: bool) -> [usize; BOARD_HEIGHT] {
-    let mut range: [usize; BOARD_HEIGHT] = [0; BOARD_HEIGHT];
-
-    if a {
-        // Range from 0 to BOARD_HEIGHT - 1
-        for i in 0..BOARD_HEIGHT {
-            range[i] = i;
-        }
+fn board_to_led_index(x: usize, y: usize, flip_y: bool) -> usize {
+    let y_mapped = if flip_y { BOARD_HEIGHT - 1 - y } else { y };
+    let col_start = x * BOARD_HEIGHT; // Each column has 20 LEDs
+    if x % 2 == 0 {
+        // Even columns: y=0 at top (or bottom if flipped), y=19 at bottom (or top)
+        col_start + y_mapped
     } else {
-        // Range from BOARD_HEIGHT - 1 to 0
-        for i in 0..BOARD_HEIGHT {
-            range[i] = BOARD_HEIGHT - 1 - i;
-        }
+        // Odd columns: y=0 at bottom (or top if flipped), y=19 at top (or bottom)
+        col_start + (BOARD_HEIGHT - 1 - y_mapped)
     }
-
-    range
 }
+
 
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) {
@@ -301,6 +108,7 @@ async fn main(_spawner: Spawner) {
     let left_button = Input::new(peripherals.GPIO2, in_config);
 
     let freq = Rate::from_mhz(80);
+    let delay = Delay::new();
     let rng = Rng::new(peripherals.RNG);
     let rmt = Rmt::new(peripherals.RMT, freq).unwrap().into_async();
     let mut channel = match rmt.channel0.configure(
@@ -316,13 +124,15 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    let mut game = Tetris::new(rng);
+    let trandom = TetrisRng(rng);
+    let mut game = Tetris::new(trandom);
     let mut last_update = time::Instant::now();
     let fall_interval = time::Duration::from_millis(FALL_INTERVAL);
 
     let mut last_key_time = time::Instant::now();
-    let debounce_duration = time::Duration::from_millis(100); // 100ms debounce
+    let debounce_duration = time::Duration::from_millis(250); // 100ms debounce
 
+    println!("Tetris game started!");
     // Game loop
     'game_loop: loop {
         // Handle timing
@@ -354,35 +164,37 @@ async fn main(_spawner: Spawner) {
             }
         }
 
-        // Draw game
-        for x in 0..BOARD_WIDTH {
-            let range = create_range(x % 2 == 1);
-            for y in range {
+        let mut led_colors = [(0u8, 0u8, 0u8); 200]; // Frame buffer for 200 LEDs
+        // Render board state
+        for y in 0..BOARD_HEIGHT {
+            for x in 0..BOARD_WIDTH {
                 if let Some(color) = game.board[y][x] {
-                    let (r, g, b) = color_to_rgb(color);
-                    let led_bits = create_led_bits(r, g, b, 0);
-                    match channel.transmit(&led_bits).await {
-                        Ok(_) => {}
-                        Err(err) => {
-                            println!("Error transmitting data to LED: {:?}", err);
-                        }
-                    }
+                    let led_idx = board_to_led_index(x, y, true);
+                    led_colors[led_idx] = color_to_rgb(color);
                 }
-                if !game.game_over {
-                    for &(dx, dy) in &game.current_piece.shape {
-                        if (game.piece_pos.0 + dx as i8) as usize == x
-                            && (game.piece_pos.1 + dy as i8) as usize == y
-                        {
-                            let (r, g, b) = color_to_rgb(game.current_piece.color);
-                            let led_bits = create_led_bits(r, g, b, 0);
-                            match channel.transmit(&led_bits).await {
-                                Ok(_) => {}
-                                Err(err) => {
-                                    println!("Error transmitting data to LED: {:?}", err);
-                                }
-                            }
-                        }
-                    }
+            }
+        }
+        // Render current piece (if not game over)
+        if !game.is_game_over() {
+            for &(dx, dy) in &game.current_piece.shape {
+                let x = (game.piece_pos.0 + dx as i8) as usize;
+                let y = (game.piece_pos.1 + dy as i8) as usize;
+                if x < BOARD_WIDTH && y < BOARD_HEIGHT {
+                    let led_idx = board_to_led_index(x, y, true);
+                    led_colors[led_idx] = color_to_rgb(game.current_piece.color);
+                }
+            }
+        }
+
+        // Send data to LED strip
+        // Transmit one LED at a time
+        for (i, &(r, g, b)) in led_colors.iter().enumerate() {
+            let data = create_led_bits(r, g, b);
+            match channel.transmit(&data).await {
+                Ok(_) => {},
+                Err(err) => {
+                    println!("Error transmitting LED {}: {:?}", i, err);
+                    break;
                 }
             }
         }
