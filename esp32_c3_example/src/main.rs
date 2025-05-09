@@ -11,11 +11,7 @@
 #![no_std]
 #![no_main]
 
-use core::cell::RefCell;
-use core::fmt;
-use critical_section::Mutex;
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{
     delay::Delay,
