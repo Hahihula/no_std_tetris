@@ -1,6 +1,6 @@
 [package]
 name = "no_std_tetris"
-version = "0.1.0"
+version = "0.1.1"
 authors = [ "Petr Gadorek <hahihula@gmail.com>"]
 edition = "2024"
 description = "A flexible Tetris implementation for no_std and standard environments"
@@ -19,8 +19,10 @@ path = "src/lib.rs"
 name = "tetris"
 path = "src/main.rs"
 
-
 [dependencies]
+# No dependencies for the library
+
+[dev-dependencies]
 crossterm = "0.27"
 ctrlc = "3.4"
 rand = "0.9.1"
