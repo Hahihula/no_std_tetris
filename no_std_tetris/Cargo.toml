@@ -1,6 +1,6 @@
 [package]
 name = "no_std_tetris"
-version = "0.1.1"
+version = "0.2.0"
 authors = [ "Petr Gadorek <hahihula@gmail.com>"]
 edition = "2024"
 description = "A flexible Tetris implementation for no_std and standard environments"
