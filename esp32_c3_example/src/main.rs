@@ -14,12 +14,10 @@
 use embassy_executor::Spawner;
 use esp_backtrace as _;
 use esp_hal::{
-    delay::Delay,
-    gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
-    handler, main,
-    rmt::{PulseCode, Rmt, TxChannelAsync, TxChannelConfig, TxChannelCreatorAsync},
-    rng::Rng,
-    time::{self, Rate},
+    clock::CpuClock,
+    gpio::{Input, Level, Output, Pull},
+    rmt::{PulseCode, TxChannelConfig, TxChannelCreator},
+    time::Rate,
 };
 use esp_println::println;
 use no_std_tetris::{RandomGenerator, Tetris, Color};
@@ -27,7 +25,7 @@ use no_std_tetris::{RandomGenerator, Tetris, Color};
 // global config
 const BOARD_WIDTH: usize = 10;
 const BOARD_HEIGHT: usize = 20;
-const FALL_INTERVAL: u64 = 500; // TODO: should be function of score -> higher score faster speed
+const FALL_INTERVAL_MS: u64 = 500;
 const BRIGHTNESS: u8 = 12;
 // // neopixel
 const T0H: u16 = 35; // 437.5 ns
@@ -35,18 +33,24 @@ const T0L: u16 = 90; // 1125 ns
 const T1H: u16 = 70; // 875 ns
 const T1L: u16 = 55; // 687.5 ns
 
-struct TetrisRng(Rng);
+struct TetrisRng;
 
 impl RandomGenerator for TetrisRng {
     fn next_random(&mut self) -> usize {
-        self.next_random() as usize
+        // Simple LFSR-like pseudo-random for embedded
+        static mut STATE: u32 = 0x12345678;
+        unsafe {
+            let state = STATE;
+            let new_state = state.wrapping_mul(1103515245).wrapping_add(12345);
+            STATE = new_state;
+            (new_state >> 16) as usize
+        }
     }
 }
 
-
 // neopixel LED strip config
-fn create_led_bits(r: u8, g: u8, b: u8) -> [u32; 25] {
-    let mut data = [PulseCode::empty(); 25];
+fn create_led_bits(r: u8, g: u8, b: u8) -> [PulseCode; 25] {
+    let mut data = [PulseCode::default(); 25];
 
     // WS2812B expects GRB order
     let bytes = [g, r, b];
@@ -91,76 +95,77 @@ fn board_to_led_index(x: usize, y: usize, flip_y: bool) -> usize {
     }
 }
 
-
-#[esp_hal_embassy::main]
+#[esp_rtos::main]
 async fn main(_spawner: Spawner) {
-    let peripherals = esp_hal::init(esp_hal::Config::default());
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    let peripherals = esp_hal::init(config);
 
-    let out_config = OutputConfig::default();
-    let led = Output::new(peripherals.GPIO8, Level::High, out_config);
-    let in_config = InputConfig::default().with_pull(Pull::Up); // Use pull-up resistor for button
-    let right_button = Input::new(peripherals.GPIO0, in_config);
-    let middle_button = Input::new(peripherals.GPIO1, in_config);
+    // Status LED on GPIO8
+    let mut status_led = Output::new(peripherals.GPIO8, Level::Low, Default::default());
+
+    // Button inputs with pull-ups
+    let in_config = esp_hal::gpio::InputConfig::default().with_pull(Pull::Up);
+    let right_button = Input::new(peripherals.GPIO0, in_config.clone());
+    let middle_button = Input::new(peripherals.GPIO1, in_config.clone());
     let left_button = Input::new(peripherals.GPIO2, in_config);
 
-    let freq = Rate::from_mhz(80);
-    let delay = Delay::new();
-    let rng = Rng::new(peripherals.RNG);
-    let rmt = Rmt::new(peripherals.RMT, freq).unwrap().into_async();
-    let mut channel = match rmt.channel0.configure(
-        peripherals.GPIO4,
-        TxChannelConfig::default().with_clk_divider(1),
-    ) {
-        Ok(channel) => channel,
-        Err(err) => {
-            panic!(
-                "Failed to configure RMT channel for led controll: {:?}",
-                err
-            );
-        }
-    };
+    // RMT setup for NeoPixel on GPIO4
+    let rmt = esp_hal::rmt::Rmt::new(peripherals.RMT, Rate::from_mhz(80))
+        .unwrap()
+        .into_async();
 
-    let trandom = TetrisRng(rng);
-    let mut game = Tetris::new(trandom);
-    let mut last_update = time::Instant::now();
-    let fall_interval = time::Duration::from_millis(FALL_INTERVAL);
+    let tx_config = TxChannelConfig::default()
+        .with_clk_divider(1)
+        .with_idle_output_level(Level::Low)
+        .with_idle_output(false);
 
-    let mut last_key_time = time::Instant::now();
-    let debounce_duration = time::Duration::from_millis(250); // 100ms debounce
+    let mut channel = rmt
+        .channel0
+        .configure_tx(&tx_config)
+        .unwrap()
+        .with_pin(peripherals.GPIO4);
+
+    let mut game = Tetris::new(TetrisRng);
+    let mut last_update = embassy_time::Instant::now();
+    let fall_interval = embassy_time::Duration::from_millis(FALL_INTERVAL_MS);
+
+    let mut last_key_time = embassy_time::Instant::now();
+    let debounce_duration = embassy_time::Duration::from_millis(250);
 
     println!("Tetris game started!");
+
     // Game loop
-    'game_loop: loop {
-        // Handle timing
-        let now = time::Instant::now();
+    loop {
+        let now = embassy_time::Instant::now();
+
+        // Handle auto-fall timing
         if now - last_update >= fall_interval {
             game.move_down();
             last_update = now;
         }
 
+        // Handle button inputs with debounce
         if right_button.is_low() {
-            println!("right_button pressed!");
             if now - last_key_time > debounce_duration {
                 last_key_time = now;
                 game.move_right();
             }
         }
         if left_button.is_low() {
-            println!("left_button pressed!");
             if now - last_key_time > debounce_duration {
                 last_key_time = now;
                 game.move_left();
             }
         }
         if middle_button.is_low() {
-            println!("middle_button pressed!");
             if now - last_key_time > debounce_duration {
                 last_key_time = now;
                 game.rotate();
             }
         }
 
-        let mut led_colors = [(0u8, 0u8, 0u8); 200]; // Frame buffer for 200 LEDs
+        let mut led_colors = [(0u8, 0u8, 0u8); 200];
+
         // Render board state
         for y in 0..BOARD_HEIGHT {
             for x in 0..BOARD_WIDTH {
@@ -170,6 +175,7 @@ async fn main(_spawner: Spawner) {
                 }
             }
         }
+
         // Render current piece (if not game over)
         if !game.is_game_over() {
             for &(dx, dy) in &game.current_piece.shape {
@@ -183,22 +189,18 @@ async fn main(_spawner: Spawner) {
         }
 
         // Send data to LED strip
-        // Transmit one LED at a time
-        for (i, &(r, g, b)) in led_colors.iter().enumerate() {
+        for (_, &(r, g, b)) in led_colors.iter().enumerate() {
             let data = create_led_bits(r, g, b);
             match channel.transmit(&data).await {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(err) => {
-                    println!("Error transmitting LED {}: {:?}", i, err);
+                    println!("Error transmitting LED data: {:?}", err);
                     break;
                 }
             }
         }
 
-        if game.is_game_over() {
-            break 'game_loop;
-        }
+        // Small delay to prevent busy-waiting
+        embassy_time::Timer::after_millis(10).await;
     }
-    println!("Thanks for playing! You scored {} points.", game.score);
-    loop {} // Keep the program running
 }

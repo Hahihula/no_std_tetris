@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = [
+    "no_std_tetris",
+    "esp32_c3_example",
+]
